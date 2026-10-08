@@ -43,3 +43,18 @@ Architecture:
 - `infrastructure/config`: `KafkaConfiguration` retains Kafka retry and invalid-message handling.
 
 The Spring Boot entry point remains in the root package. Application services depend on ports and domain types; infrastructure adapters implement or invoke those ports.
+
+## GitHub Actions Docker Hub secrets
+
+The develop and main pipelines publish `victodomvar/scaffoldops-deployment-worker` to Docker Hub. Their Docker Push jobs use `docker/login-action@v3` with the same secret names as generator-api and generator-worker:
+
+| Secret | Required value |
+| --- | --- |
+| `DOCKER_USERNAME` | Docker Hub username for an account allowed to push to the image repository. |
+| `DOCKER_PASSWORD` | Docker Hub access token with write permission for the image repository (recommended instead of an account password). |
+
+Create both as repository Actions secrets under **Settings → Secrets and variables → Actions**, or as organization Actions secrets whose repository access policy includes deployment-worker. The Docker Push jobs do not select a GitHub environment, so environment-only secrets are insufficient. Keep credentials in GitHub secrets; do not put them in workflow files. The Docker Push jobs check for missing secrets before login without printing their values.
+
+### Troubleshooting: Docker Hub login
+
+`Error: Username and password required` from `docker/login-action@v3` means `DOCKER_USERNAME` or `DOCKER_PASSWORD` is missing or not available to this repository. Check the exact secret names and, for organization secrets, confirm that deployment-worker is included in the allowed repositories. Use a Docker Hub access token as `DOCKER_PASSWORD`, then rerun the failed workflow. The preflight check reports `DOCKER_USERNAME is not configured` and/or `DOCKER_PASSWORD is not configured` when a secret is unavailable.
