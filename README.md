@@ -29,3 +29,17 @@ curl http://localhost:8088/hello
 Validation: mvn clean test; kubectl kustomize k8s/deployment. Unit tests mock kubectl/API; a live rollout requires an accessible image, cluster, Kafka and authenticated API.
 
 Deployment publication waits for broker acknowledgement before the API commits. Events observed before that commit retry based on timestamps.updatedAt. PostgreSQL/Kafka still have no outbox; a commit failure after publish requires reconciliation.
+
+Architecture:
+
+- `domain/event`: `DeploymentEvent` retains the Kafka payload and pure identity, namespace and replica validation, plus deterministic resource naming.
+- `domain/model`: `DeploymentStatus` defines the callback outcomes.
+- `application/port/in`: deploy, undeploy and cleanup use cases.
+- `application/port/out`: `KubernetesDeploymentPort` and `GenerationRequestStatusPort` isolate external operations.
+- `application/service`: `DeploymentLifecycleService` validates requests, checks the pending lifecycle, coordinates Kubernetes operations and reports outcomes. Permanent cleanup validates and undeploys without an API callback.
+- `infrastructure/messaging/kafka`: `DeploymentListener` decodes the existing topic payloads and invokes input ports.
+- `infrastructure/kubernetes`: `KubernetesResourceFactory` builds manifests; `KubectlKubernetesDeploymentAdapter` handles ownership checks, apply, rollout and delete through `Kubectl`.
+- `infrastructure/generatorapi`: `GeneratorApi` implements status checks and authenticated HTTP callbacks.
+- `infrastructure/config`: `KafkaConfiguration` retains Kafka retry and invalid-message handling.
+
+The Spring Boot entry point remains in the root package. Application services depend on ports and domain types; infrastructure adapters implement or invoke those ports.

@@ -1,4 +1,6 @@
-package com.scaffoldops.deploymentworker;
+package com.scaffoldops.deploymentworker.infrastructure.generatorapi;
+
+import com.scaffoldops.deploymentworker.domain.event.DeploymentEvent;
 import org.junit.jupiter.api.Test;
 import org.springframework.web.client.RestClient;
 import com.sun.net.httpserver.HttpServer;
@@ -39,4 +41,30 @@ class GeneratorApiTest {
    assertThat(api.pending(e,true)).isFalse(); // Old deploy cannot overwrite a newer retry.
   } finally {server.stop(0);}
  }
+ @Test void authenticatesWithClientCredentialsAndAcknowledgesDeletedRequests() throws Exception {
+  var server=HttpServer.create(new InetSocketAddress("127.0.0.1",0),0);
+  var tokenForm=new AtomicReference<String>();
+  var authorization=new AtomicReference<String>();
+  server.createContext("/token", exchange->{
+   tokenForm.set(new String(exchange.getRequestBody().readAllBytes(),StandardCharsets.UTF_8));
+   byte[] response="{\"access_token\":\"oauth-token\"}".getBytes(StandardCharsets.UTF_8);
+   exchange.getResponseHeaders().set("Content-Type","application/json");
+   exchange.sendResponseHeaders(200,response.length);exchange.getResponseBody().write(response);exchange.close();
+  });
+  server.createContext("/", exchange->{
+   authorization.set(exchange.getRequestHeaders().getFirst("Authorization"));
+   exchange.getRequestBody().readAllBytes();exchange.sendResponseHeaders(404,-1);exchange.close();
+  });
+  server.start();
+  try {
+   String url="http://127.0.0.1:"+server.getAddress().getPort();
+   var api=new GeneratorApi(RestClient.builder(),url,url+"/token","deployment-worker","secret","");
+   var e=new DeploymentEvent(UUID.randomUUID(),"hello","s3://a/b","image","generated-dev",1,OffsetDateTime.now());
+   assertThat(api.pending(e,true)).isFalse();
+   api.callback(e,"DEPLOYED","Ready");
+   assertThat(authorization.get()).isEqualTo("Bearer oauth-token");
+   assertThat(tokenForm.get()).contains("grant_type=client_credentials","client_id=deployment-worker","client_secret=secret");
+  } finally {server.stop(0);}
+ }
+
 }

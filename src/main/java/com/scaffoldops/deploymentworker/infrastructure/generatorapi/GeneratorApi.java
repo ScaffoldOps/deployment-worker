@@ -1,4 +1,7 @@
-package com.scaffoldops.deploymentworker;
+package com.scaffoldops.deploymentworker.infrastructure.generatorapi;
+import com.scaffoldops.deploymentworker.domain.event.DeploymentEvent;
+import com.scaffoldops.deploymentworker.application.port.out.GenerationRequestStatusPort;
+
 import org.springframework.stereotype.Component;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.web.client.RestClient;
@@ -7,7 +10,7 @@ import org.springframework.util.LinkedMultiValueMap;
 import com.fasterxml.jackson.databind.JsonNode;
 import java.util.Map;
 @Component
-public class GeneratorApi {
+public class GeneratorApi implements GenerationRequestStatusPort {
  private final RestClient client;private final String tokenUrl,clientId,clientSecret,staticToken;
  public GeneratorApi(RestClient.Builder builder,@Value("${app.generator-api.base-url}") String url,
  @Value("${app.generator-api.token-url:}") String tokenUrl,@Value("${app.generator-api.client-id:deployment-worker}") String clientId,

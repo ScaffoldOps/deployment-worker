@@ -1,4 +1,5 @@
-package com.scaffoldops.deploymentworker;
+package com.scaffoldops.deploymentworker.infrastructure.kubernetes;
+
 import org.springframework.stereotype.Component;
 import org.springframework.beans.factory.annotation.Value;
 import java.nio.charset.StandardCharsets;

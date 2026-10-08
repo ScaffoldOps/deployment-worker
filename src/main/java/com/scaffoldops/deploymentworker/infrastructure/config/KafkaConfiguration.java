@@ -1,4 +1,5 @@
-package com.scaffoldops.deploymentworker;
+package com.scaffoldops.deploymentworker.infrastructure.config;
+
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.kafka.listener.DefaultErrorHandler;
