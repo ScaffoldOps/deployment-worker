@@ -46,11 +46,15 @@ jobs:
           kubectl get namespace "${NAMESPACE}" >/dev/null 2>&1 || kubectl create namespace "${NAMESPACE}"
           kubectl get secret deployment-worker-oauth -n "${NAMESPACE}" >/dev/null
 
-          sed -e "s|namespace: scaffoldops-dev|namespace: ${NAMESPACE}|g" \
-              -e "s|namespace: generated-dev|namespace: ${GENERATED_NAMESPACE}|g" \
-              k8s/deployment/rbac.yaml \
-              k8s/deployment/worker.yaml \
-            | kubectl apply -f -
+          {
+            sed -e "s|namespace: scaffoldops-dev|namespace: ${NAMESPACE}|g" \
+                -e "s|namespace: generated-dev|namespace: ${GENERATED_NAMESPACE}|g" \
+                k8s/deployment/rbac.yaml
+            echo "---"
+            sed -e "s|namespace: scaffoldops-dev|namespace: ${NAMESPACE}|g" \
+                -e "s|namespace: generated-dev|namespace: ${GENERATED_NAMESPACE}|g" \
+                k8s/deployment/worker.yaml
+          } | kubectl apply -f -
           kubectl set image deployment/deployment-worker \
             deployment-worker="${IMAGE_NAME}:${IMAGE_VERSION}" \
             -n "${NAMESPACE}"
