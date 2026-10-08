@@ -1,0 +1,41 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: deployment-worker
+  namespace: scaffoldops-dev
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: deployment-worker
+  template:
+    metadata:
+      labels:
+        app: deployment-worker
+    spec:
+      serviceAccountName: deployment-worker
+      containers:
+        - name: deployment-worker
+          image: scaffoldops/deployment-worker:latest
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: KAFKA_BOOTSTRAP_SERVERS
+              value: kafka:9092
+            - name: GENERATOR_API_BASE_URL
+              value: http://generator-api:8080
+            - name: GENERATOR_API_TOKEN_URL
+              valueFrom:
+                secretKeyRef:
+                  name: deployment-worker-oauth
+                  key: token-url
+            - name: GENERATOR_API_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: deployment-worker-oauth
+                  key: client-secret
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            runAsUser: 10001
+            capabilities:
+              drop: [ALL]

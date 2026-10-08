@@ -1,0 +1,30 @@
+spring:
+  application:
+    name: deployment-worker
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    consumer:
+      group-id: deployment-worker
+      auto-offset-reset: earliest
+      enable-auto-commit: false
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      properties:
+        max.poll.interval.ms: 600000
+        max.poll.records: 1
+    listener:
+      ack-mode: record
+app:
+  kafka:
+    topics:
+      artifact-cleanup-requested: ${ARTIFACT_CLEANUP_REQUESTED_TOPIC:artifact-cleanup-requested}
+      deployment-requested: ${DEPLOYMENT_REQUESTED_TOPIC:deployment-requested}
+      undeployment-requested: ${UNDEPLOYMENT_REQUESTED_TOPIC:undeployment-requested}
+  generator-api:
+    base-url: ${GENERATOR_API_BASE_URL:http://generator-api:8080}
+    token-url: ${GENERATOR_API_TOKEN_URL:}
+    client-id: ${GENERATOR_API_CLIENT_ID:deployment-worker}
+    client-secret: ${GENERATOR_API_CLIENT_SECRET:}
+    token: ${GENERATOR_API_TOKEN:}
+  kubernetes:
+    container-port: ${GENERATED_CONTAINER_PORT:8080}
