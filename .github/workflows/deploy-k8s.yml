@@ -1,0 +1,59 @@
+name: Deploy deployment-worker to Kubernetes
+
+on:
+  workflow_call:
+    inputs:
+      namespace:
+        required: true
+        type: string
+      generated_namespace:
+        required: true
+        type: string
+      environment_name:
+        required: true
+        type: string
+      image_version:
+        required: true
+        type: string
+
+jobs:
+  deploy:
+    runs-on: self-hosted
+    environment: ${{ inputs.environment_name }}
+    env:
+      NAMESPACE: ${{ inputs.namespace }}
+      GENERATED_NAMESPACE: ${{ inputs.generated_namespace }}
+      ENVIRONMENT_NAME: ${{ inputs.environment_name }}
+      IMAGE_NAME: victodomvar/scaffoldops-deployment-worker
+      IMAGE_VERSION: ${{ inputs.image_version }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          clean: true
+
+      - name: Set up kubectl
+        uses: azure/setup-kubectl@v4
+        with:
+          version: v1.32.0
+
+      - name: Deploy application
+        run: |
+          set -euo pipefail
+          kubectl config use-context minikube
+          kubectl cluster-info
+
+          kubectl get namespace "${NAMESPACE}" >/dev/null 2>&1 || kubectl create namespace "${NAMESPACE}"
+          kubectl get secret deployment-worker-oauth -n "${NAMESPACE}" >/dev/null
+
+          sed -e "s|namespace: scaffoldops-dev|namespace: ${NAMESPACE}|g" \
+              -e "s|namespace: generated-dev|namespace: ${GENERATED_NAMESPACE}|g" \
+              k8s/deployment/rbac.yaml \
+              k8s/deployment/worker.yaml \
+            | kubectl apply -f -
+          kubectl set image deployment/deployment-worker \
+            deployment-worker="${IMAGE_NAME}:${IMAGE_VERSION}" \
+            -n "${NAMESPACE}"
+          kubectl rollout restart deployment/deployment-worker -n "${NAMESPACE}"
+          kubectl rollout status deployment/deployment-worker -n "${NAMESPACE}" --timeout=300s
+          kubectl wait --for=condition=ready pod -l app=deployment-worker -n "${NAMESPACE}" --timeout=300s

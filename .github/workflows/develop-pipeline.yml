@@ -1,0 +1,150 @@
+name: Deployment Worker Develop Pipeline
+
+on:
+  push:
+    branches:
+      - develop
+
+concurrency:
+  group: develop-pipeline-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  code_quality:
+    name: Code Quality
+    runs-on: self-hosted
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          clean: true
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: maven
+
+      - name: Maven verify (skip tests)
+        run: mvn --batch-mode --no-transfer-progress verify -DskipTests
+
+  tests:
+    name: Tests
+    runs-on: self-hosted
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          clean: true
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: maven
+
+      - name: Maven clean test
+        run: mvn --batch-mode --no-transfer-progress clean test
+
+  docker_build:
+    name: Docker Build
+    runs-on: self-hosted
+    needs:
+      - code_quality
+      - tests
+    outputs:
+      commit_sha: ${{ steps.image_metadata.outputs.commit_sha }}
+      latest_tag: ${{ steps.image_metadata.outputs.latest_tag }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          clean: true
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: maven
+
+      - name: Build application jar
+        run: mvn --batch-mode --no-transfer-progress clean package -DskipTests
+
+      - name: Compute image metadata
+        id: image_metadata
+        run: |
+          set -euo pipefail
+
+          echo "commit_sha=${GITHUB_SHA}" >> "${GITHUB_OUTPUT}"
+          echo "latest_tag=latest" >> "${GITHUB_OUTPUT}"
+
+      - name: Build Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          push: false
+          tags: |
+            victodomvar/scaffoldops-deployment-worker:${{ steps.image_metadata.outputs.latest_tag }}
+            victodomvar/scaffoldops-deployment-worker:${{ steps.image_metadata.outputs.commit_sha }}
+
+  docker_push:
+    name: Docker Push
+    runs-on: self-hosted
+    needs:
+      - docker_build
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          clean: true
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: maven
+
+      - name: Build application jar
+        run: mvn --batch-mode --no-transfer-progress clean package -DskipTests
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          tags: |
+            victodomvar/scaffoldops-deployment-worker:${{ needs.docker_build.outputs.latest_tag }}
+            victodomvar/scaffoldops-deployment-worker:${{ needs.docker_build.outputs.commit_sha }}
+
+  deploy:
+    name: Deploy to DEV
+    needs:
+      - docker_build
+      - docker_push
+    uses: ./.github/workflows/deploy-k8s.yml
+    with:
+      namespace: scaffoldops-dev
+      generated_namespace: generated-dev
+      environment_name: DEV
+      image_version: latest
