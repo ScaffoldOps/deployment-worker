@@ -1,84 +1,66 @@
 # deployment-worker
 
-MVP Spring Boot Kafka worker. Runs kubectl using its in-cluster service account (or your local kubeconfig). Namespaces are pre-created by operators; target namespaces need a Role and RoleBinding. The supplied manifests grant access only to generated-dev deployments and services, with no namespace or secret permissions. scaffoldops-dev must already exist.
+Kafka worker that deploys generated images as Kubernetes Deployments and ClusterIP Services, waits for rollout, reports lifecycle outcomes, and removes owned resources on undeploy or permanent cleanup.
 
-Events, keyed by generationRequestId:
+Platform guides: [ScaffoldOps documentation](https://github.com/ScaffoldOps/scaffoldops-docs) · [local setup](https://github.com/ScaffoldOps/scaffoldops-docs/blob/main/docs/local-development.md) · [configuration](https://github.com/ScaffoldOps/scaffoldops-docs/blob/main/docs/configuration.md) · [known gaps](https://github.com/ScaffoldOps/scaffoldops-docs/blob/main/docs/findings.md).
 
-```json
-{"generationRequestId":"a4bc394a-0888-494d-9769-30e2333a341d","name":"hello","artifactRef":"s3://artifacts/hello.zip","imageRef":"docker.io/example/hello:latest","namespace":"generated-dev","replicas":1,"requestedAt":"2026-10-08T12:00:00Z"}
-```
+## Local requirements
 
-undeployment-requested uses generationRequestId, name, namespace, requestedAt only. Unknown fields are ignored. Invalid messages are logged and discarded without Kubernetes writes. Operational/API transport errors retry indefinitely. Kubernetes failures report DEPLOYMENT_FAILED, permitting an explicit API retry. Callbacks require authentication; configure OAuth client credentials (GENERATOR_API_TOKEN_URL, GENERATOR_API_CLIENT_ID, GENERATOR_API_CLIENT_SECRET) or a development GENERATOR_API_TOKEN. The worker checks the API status/namespace before applying events; deleted or superseded requests are skipped. Callback transport/server failures are retried; 404/409 responses acknowledge a deleted or superseded lifecycle. There is no distributed transaction across Kafka, API and Kubernetes; a callback can still race a newer lifecycle operation. Cancellation during DEPLOYING is intentionally unsupported.
+Java 17, Maven 3.9 for the container build, a reachable Kafka broker and authenticated generator-api callbacks (for workers). Install kubectl and select the intended kubeconfig/context; provision target namespace RBAC.
 
-Resource names are a sanitized prefix (30 characters) plus the full UUID without dashes, at most 63 characters. Deployment and ClusterIP Service have app.kubernetes.io/name, app.kubernetes.io/managed-by=scaffoldops and scaffoldops.io/request-id labels. Updates use kubectl apply, refuse resources with another owner, and wait up to 120 seconds for rollout readiness (TCP port 8080). Undeploy deletes only resources with both ownership labels; missing resources succeed. Artifacts/images/DB are never deleted by this worker. Permanent asset cleanup remains generator-worker's responsibility. This worker also consumes artifact-cleanup-requested (configurable app.kafka.topics.artifact-cleanup-requested / ARTIFACT_CLEANUP_REQUESTED_TOPIC) in its own Kafka group to remove Kubernetes resources using requestId, name, deploymentNamespace and deletedAt. Cleanup skips events without a namespace and does not callback after DB deletion.
+Kafka port-forward alone does not fix broker metadata advertising `kafka:9092`; use a broker with a host-reachable advertised listener for host execution. The cluster path is the documented MVP setup.
 
-Configuration: app.kafka.topics.deployment-requested and app.kafka.topics.undeployment-requested (environment DEPLOYMENT_REQUESTED_TOPIC / UNDEPLOYMENT_REQUESTED_TOPIC), app.generator-api.base-url (GENERATOR_API_BASE_URL), app.kubernetes.container-port (GENERATED_CONTAINER_PORT, default 8080), app.kubernetes.kubectl (default kubectl). Kafka defaults to localhost:9092, override KAFKA_BOOTSTRAP_SERVERS.
+## Configuration
 
-Local/minikube: install kubectl matching the cluster, select the intended context, pre-create generated-dev, provide Kafka and API URLs and credentials, then mvn spring-boot:run. In-cluster: build the Dockerfile, publish/load the image, configure deployment-worker-oauth Secret with token-url and client-secret and the docker-hub-pull-secret registry Secret described below, then apply k8s/deployment. Adapt the worker namespace, image and Kafka address to your platform. Provision equivalent target RoleBindings for additional namespaces. No cluster-admin binding is needed.
-
-Deploy via POST /generation-requests/{id}/deployment with {"namespace":"generated-dev","replicas":1}; observe DEPLOYING → DEPLOYED or DEPLOYMENT_FAILED. DELETE the same subresource gives UNDEPLOYING → NOT_DEPLOYED or DEPLOYMENT_FAILED. Namespace and assets remain for redeployment. DELETE /generation-requests/{id} permanently removes the request/assets.
-
-Test a deployed hello-world service:
-
-```sh
-kubectl -n generated-dev get services -l scaffoldops.io/request-id=REQUEST_UUID
-kubectl -n generated-dev port-forward service/RESOURCE_NAME 8088:8080
-curl http://localhost:8088/hello
-```
-
-Validation: mvn clean test; kubectl kustomize k8s/deployment. Unit tests mock kubectl/API; a live rollout requires an accessible image, cluster, Kafka and authenticated API.
-
-Deployment publication waits for broker acknowledgement before the API commits. Events observed before that commit retry based on timestamps.updatedAt. PostgreSQL/Kafka still have no outbox; a commit failure after publish requires reconciliation.
-
-Architecture:
-
-- `domain/event`: `DeploymentEvent` retains the Kafka payload and pure identity, namespace and replica validation, plus deterministic resource naming.
-- `domain/model`: `DeploymentStatus` defines the callback outcomes.
-- `application/port/in`: deploy, undeploy and cleanup use cases.
-- `application/port/out`: `KubernetesDeploymentPort` and `GenerationRequestStatusPort` isolate external operations.
-- `application/service`: `DeploymentLifecycleService` validates requests, checks the pending lifecycle, coordinates Kubernetes operations and reports outcomes. Permanent cleanup validates and undeploys without an API callback.
-- `infrastructure/messaging/kafka`: `DeploymentListener` decodes the existing topic payloads and invokes input ports.
-- `infrastructure/kubernetes`: `KubernetesResourceFactory` builds manifests; `KubectlKubernetesDeploymentAdapter` handles ownership checks, apply, rollout and delete through `Kubectl`.
-- `infrastructure/generatorapi`: `GeneratorApi` implements status checks and authenticated HTTP callbacks.
-- `infrastructure/config`: `KafkaConfiguration` retains Kafka retry and invalid-message handling.
-
-The Spring Boot entry point remains in the root package. Application services depend on ports and domain types; infrastructure adapters implement or invoke those ports.
-
-## GitHub Actions Docker Hub secrets
-
-The develop and main pipelines publish `victodomvar/scaffoldops-deployment-worker` to Docker Hub. Their Docker Push jobs use `docker/login-action@v3` with the same secret names as generator-api and generator-worker:
-
-| Secret | Required value |
+| Variable | Use |
 | --- | --- |
-| `DOCKER_USERNAME` | Docker Hub username for an account allowed to push to the image repository. |
-| `DOCKER_PASSWORD` | Docker Hub access token with write permission for the image repository (recommended instead of an account password). |
+| `KAFKA_BOOTSTRAP_SERVERS` | Default `localhost:9092` |
+| `GENERATOR_API_BASE_URL` | Set explicitly, including `/api/generator/v1` |
+| `GENERATOR_API_TOKEN_URL`, `GENERATOR_API_CLIENT_ID`, `GENERATOR_API_CLIENT_SECRET` | OAuth callback credentials; client ID default `deployment-worker` |
+| `GENERATOR_API_TOKEN` | Local static-token alternative |
+| `GENERATED_CONTAINER_PORT` | Default `8080` |
+| `DEPLOYMENT_REQUESTED_TOPIC`, `UNDEPLOYMENT_REQUESTED_TOPIC`, `ARTIFACT_CLEANUP_REQUESTED_TOPIC` | Topic overrides |
 
-Create both as repository Actions secrets under **Settings → Secrets and variables → Actions**, or as organization Actions secrets whose repository access policy includes deployment-worker. The Docker Push jobs do not select a GitHub environment, so environment-only secrets are insufficient. Keep credentials in GitHub secrets; do not put them in workflow files. The Docker Push jobs check for missing secrets before login without printing their values.
+Kubernetes requires `deployment-worker-oauth` with `token-url` and `client-secret`, plus `docker-hub-pull-secret` of type `kubernetes.io/dockerconfigjson` in the worker namespace. The worker has no PostgreSQL dependency. Its Kafka group is `deployment-worker`.
 
-### Troubleshooting: Docker Hub login
+## Build, test and run
 
-`Error: Username and password required` from `docker/login-action@v3` means `DOCKER_USERNAME` or `DOCKER_PASSWORD` is missing or not available to this repository. Check the exact secret names and, for organization secrets, confirm that deployment-worker is included in the allowed repositories. Use a Docker Hub access token as `DOCKER_PASSWORD`, then rerun the failed workflow. The preflight check reports `DOCKER_USERNAME is not configured` and/or `DOCKER_PASSWORD is not configured` when a secret is unavailable.
+Run from this repository root after provisioning the dependencies and exporting the variables above:
 
-`toomanyrequests: too many failed login attempts for username or IP address` indicates a Docker Hub login lockout. Wait for Docker Hub's cooldown before retrying, and verify that `DOCKER_USERNAME` and `DOCKER_PASSWORD` contain the correct username and Docker Hub access token. Use an access token, not the account password. If the token may have leaked, revoke it, create a replacement and update `DOCKER_PASSWORD` before retrying. Repeated login attempts during the lockout will not fix it.
-
-### Troubleshooting: WSL Docker CLI
-
-An `EACCES: permission denied` error resolving `/mnt/c/Windows/system32/config/systemprofile/AppData/Local/Microsoft/WindowsApps/docker` means the self-hosted WSL runner is finding a WindowsApps Docker shim. Both Docker Build and Docker Push jobs remove WindowsApps directories from PATH, put `/usr/bin` first and persist that PATH for later steps before setting up Buildx. They verify `command -v docker` resolves to `/usr/bin/docker` and run `docker version`. Ensure the Linux Docker CLI is installed there and the runner can access the Docker daemon.
-
-## Kubernetes Docker Hub pull secret
-
-Before deploying directly or running the GitHub Actions deploy workflow, create `docker-hub-pull-secret` in the worker's namespace. The Deployment references this secret through `imagePullSecrets`; it must have type `kubernetes.io/dockerconfigjson`, with registry authentication stored in `.dockerconfigjson`. An Opaque secret with `DOCKER_USERNAME`/`DOCKER_PASSWORD` keys cannot be used for image pulling.
-
-For DEV, create the secret with your Docker Hub username and an access token allowed to pull the worker image:
-
-```sh
-kubectl -n scaffoldops-dev create secret docker-registry docker-hub-pull-secret \
-  --docker-server=https://index.docker.io/v1/ \
-  --docker-username='<username>' \
-  --docker-password='<Docker Hub access token>' \
-  --docker-email=unused@example.com
+```bash
+mvn clean test
+mvn clean package -DskipTests
+GENERATOR_API_BASE_URL=http://localhost:8081/api/generator/v1 GENERATOR_API_TOKEN="$TOKEN" mvn spring-boot:run
 ```
 
-Replace the placeholders locally. For PRE, run the same command with `-n scaffoldops-pre`; the secret must exist in the same namespace as the worker Pod. Provision it before running the deploy workflow. GitHub Actions `DOCKER_USERNAME` and `DOCKER_PASSWORD` secrets authenticate image pushes and do not automatically create this Kubernetes pull secret.
+## Docker and Kubernetes
 
-Keep `docker-hub-credentials` only where another application needs its Docker Hub API/environment credentials; deployment-worker does not reference it. Keep credentials out of Git, including generated Secret YAML and encoded Docker configuration.
+```bash
+docker build -f Dockerfile -t victodomvar/scaffoldops-deployment-worker:local .
+```
+
+The Dockerfile builds the JAR and copies kubectl into the runtime image. CI publishes `victodomvar/scaffoldops-deployment-worker` with `latest` and full commit SHA; both branch pipelines deploy `latest`. GitHub Actions requires repository/organization secrets `DOCKER_USERNAME` and `DOCKER_PASSWORD` (a Docker Hub access token).
+
+After applying shared infrastructure and creating component secrets:
+
+```bash
+kubectl apply -k k8s/deployment
+kubectl -n scaffoldops-dev set image deploy/deployment-worker deployment-worker=victodomvar/scaffoldops-deployment-worker:latest
+kubectl -n scaffoldops-dev set env deploy/deployment-worker GENERATOR_API_BASE_URL=http://generator-api-service/api/generator/v1
+kubectl -n scaffoldops-dev rollout status deploy/deployment-worker
+```
+
+The supplied Role/RoleBinding grants access only to Deployments and Services in `generated-dev`. Extra target namespaces need equivalent bindings. Direct manifests use a different image from CI and an incomplete API URL; the commands above override them. Generated pods do not receive imagePullSecrets automatically.
+
+## GitHub Actions
+
+- `pr-checks.yml`: Maven verification and tests for PRs to `develop`/`main` and feature branch pushes.
+- `develop-pipeline.yml`: verify, test, build/push image, deploy to `scaffoldops-dev`.
+- `main-pipeline.yml`: corresponding PRE pipeline targeting `scaffoldops-pre`.
+- `deploy-k8s.yml`: reusable `workflow_call` deployment, selects context `minikube` and waits for rollout; it is not manually dispatchable.
+
+Jobs use self-hosted runners. PRE needs additional infrastructure; see [delivery guide](https://github.com/ScaffoldOps/scaffoldops-docs/blob/main/docs/delivery.md).
+
+## Troubleshooting
+
+Check `kubectl config current-context`, pods, events and component logs before restarting. For `ImagePullBackOff`, check the image/tag and namespace-local registry secret. `docker-hub-credentials` is Opaque application configuration and must never be used as `imagePullSecrets`. WSL runners need Linux Docker, daemon access, and a readable kubeconfig; a WindowsApps Docker shim can cause EACCES. Port conflicts require changing the local side of the port-forward. See [operations](https://github.com/ScaffoldOps/scaffoldops-docs/blob/main/docs/operations.md) for commands and lifecycle diagnostics.
