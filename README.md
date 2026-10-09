@@ -14,7 +14,7 @@ Resource names are a sanitized prefix (30 characters) plus the full UUID without
 
 Configuration: app.kafka.topics.deployment-requested and app.kafka.topics.undeployment-requested (environment DEPLOYMENT_REQUESTED_TOPIC / UNDEPLOYMENT_REQUESTED_TOPIC), app.generator-api.base-url (GENERATOR_API_BASE_URL), app.kubernetes.container-port (GENERATED_CONTAINER_PORT, default 8080), app.kubernetes.kubectl (default kubectl). Kafka defaults to localhost:9092, override KAFKA_BOOTSTRAP_SERVERS.
 
-Local/minikube: install kubectl matching the cluster, select the intended context, pre-create generated-dev, provide Kafka and API URLs and credentials, then mvn spring-boot:run. In-cluster: build the Dockerfile, publish/load the image, configure deployment-worker-oauth Secret with token-url and client-secret, then apply k8s/deployment. Adapt the worker namespace, image and Kafka address to your platform. Provision equivalent target RoleBindings for additional namespaces. No cluster-admin binding is needed.
+Local/minikube: install kubectl matching the cluster, select the intended context, pre-create generated-dev, provide Kafka and API URLs and credentials, then mvn spring-boot:run. In-cluster: build the Dockerfile, publish/load the image, configure deployment-worker-oauth Secret with token-url and client-secret and the docker-hub-pull-secret registry Secret described below, then apply k8s/deployment. Adapt the worker namespace, image and Kafka address to your platform. Provision equivalent target RoleBindings for additional namespaces. No cluster-admin binding is needed.
 
 Deploy via POST /generation-requests/{id}/deployment with {"namespace":"generated-dev","replicas":1}; observe DEPLOYING → DEPLOYED or DEPLOYMENT_FAILED. DELETE the same subresource gives UNDEPLOYING → NOT_DEPLOYED or DEPLOYMENT_FAILED. Namespace and assets remain for redeployment. DELETE /generation-requests/{id} permanently removes the request/assets.
 
@@ -58,3 +58,21 @@ Create both as repository Actions secrets under **Settings → Secrets and varia
 ### Troubleshooting: Docker Hub login
 
 `Error: Username and password required` from `docker/login-action@v3` means `DOCKER_USERNAME` or `DOCKER_PASSWORD` is missing or not available to this repository. Check the exact secret names and, for organization secrets, confirm that deployment-worker is included in the allowed repositories. Use a Docker Hub access token as `DOCKER_PASSWORD`, then rerun the failed workflow. The preflight check reports `DOCKER_USERNAME is not configured` and/or `DOCKER_PASSWORD is not configured` when a secret is unavailable.
+
+## Kubernetes Docker Hub pull secret
+
+Before deploying directly or running the GitHub Actions deploy workflow, create `docker-hub-pull-secret` in the worker's namespace. The Deployment references this secret through `imagePullSecrets`; it must have type `kubernetes.io/dockerconfigjson`, with registry authentication stored in `.dockerconfigjson`. An Opaque secret with `DOCKER_USERNAME`/`DOCKER_PASSWORD` keys cannot be used for image pulling.
+
+For DEV, create the secret with your Docker Hub username and an access token allowed to pull the worker image:
+
+```sh
+kubectl -n scaffoldops-dev create secret docker-registry docker-hub-pull-secret \
+  --docker-server=https://index.docker.io/v1/ \
+  --docker-username='<username>' \
+  --docker-password='<Docker Hub access token>' \
+  --docker-email=unused@example.com
+```
+
+Replace the placeholders locally. For PRE, run the same command with `-n scaffoldops-pre`; the secret must exist in the same namespace as the worker Pod. Provision it before running the deploy workflow. GitHub Actions `DOCKER_USERNAME` and `DOCKER_PASSWORD` secrets authenticate image pushes and do not automatically create this Kubernetes pull secret.
+
+Keep `docker-hub-credentials` only where another application needs its Docker Hub API/environment credentials; deployment-worker does not reference it. Keep credentials out of Git, including generated Secret YAML and encoded Docker configuration.

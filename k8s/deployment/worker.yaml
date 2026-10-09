@@ -14,6 +14,8 @@ spec:
         app: deployment-worker
     spec:
       serviceAccountName: deployment-worker
+      imagePullSecrets:
+        - name: docker-hub-pull-secret
       containers:
         - name: deployment-worker
           image: scaffoldops/deployment-worker:latest
