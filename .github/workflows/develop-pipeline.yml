@@ -66,6 +66,33 @@ jobs:
         with:
           clean: true
 
+      - name: Use Linux Docker CLI
+        shell: bash
+        run: |
+          set -euo pipefail
+          linux_path=/usr/bin
+          IFS=':' read -r -a path_entries <<< "${PATH}"
+          for entry in "${path_entries[@]}"; do
+            case "${entry}" in
+              ""|/usr/bin|*/Microsoft/WindowsApps|*/Microsoft/WindowsApps/) continue ;;
+            esac
+            linux_path="${linux_path}:${entry}"
+          done
+          export PATH="${linux_path}"
+          hash -r
+          echo "PATH=${PATH}" >> "${GITHUB_ENV}"
+          echo "/usr/bin" >> "${GITHUB_PATH}"
+          docker_cli=$(command -v docker) || {
+            echo "::error::Linux Docker CLI is missing. Install Docker in WSL at /usr/bin/docker."
+            exit 1
+          }
+          echo "Docker CLI: ${docker_cli}"
+          if [[ "${docker_cli}" != /usr/bin/docker ]]; then
+            echo "::error::Expected the WSL Linux Docker CLI at /usr/bin/docker."
+            exit 1
+          fi
+          docker version
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
@@ -107,6 +134,33 @@ jobs:
         uses: actions/checkout@v4
         with:
           clean: true
+
+      - name: Use Linux Docker CLI
+        shell: bash
+        run: |
+          set -euo pipefail
+          linux_path=/usr/bin
+          IFS=':' read -r -a path_entries <<< "${PATH}"
+          for entry in "${path_entries[@]}"; do
+            case "${entry}" in
+              ""|/usr/bin|*/Microsoft/WindowsApps|*/Microsoft/WindowsApps/) continue ;;
+            esac
+            linux_path="${linux_path}:${entry}"
+          done
+          export PATH="${linux_path}"
+          hash -r
+          echo "PATH=${PATH}" >> "${GITHUB_ENV}"
+          echo "/usr/bin" >> "${GITHUB_PATH}"
+          docker_cli=$(command -v docker) || {
+            echo "::error::Linux Docker CLI is missing. Install Docker in WSL at /usr/bin/docker."
+            exit 1
+          }
+          echo "Docker CLI: ${docker_cli}"
+          if [[ "${docker_cli}" != /usr/bin/docker ]]; then
+            echo "::error::Expected the WSL Linux Docker CLI at /usr/bin/docker."
+            exit 1
+          fi
+          docker version
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3

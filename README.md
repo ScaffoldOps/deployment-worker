@@ -59,6 +59,12 @@ Create both as repository Actions secrets under **Settings → Secrets and varia
 
 `Error: Username and password required` from `docker/login-action@v3` means `DOCKER_USERNAME` or `DOCKER_PASSWORD` is missing or not available to this repository. Check the exact secret names and, for organization secrets, confirm that deployment-worker is included in the allowed repositories. Use a Docker Hub access token as `DOCKER_PASSWORD`, then rerun the failed workflow. The preflight check reports `DOCKER_USERNAME is not configured` and/or `DOCKER_PASSWORD is not configured` when a secret is unavailable.
 
+`toomanyrequests: too many failed login attempts for username or IP address` indicates a Docker Hub login lockout. Wait for Docker Hub's cooldown before retrying, and verify that `DOCKER_USERNAME` and `DOCKER_PASSWORD` contain the correct username and Docker Hub access token. Use an access token, not the account password. If the token may have leaked, revoke it, create a replacement and update `DOCKER_PASSWORD` before retrying. Repeated login attempts during the lockout will not fix it.
+
+### Troubleshooting: WSL Docker CLI
+
+An `EACCES: permission denied` error resolving `/mnt/c/Windows/system32/config/systemprofile/AppData/Local/Microsoft/WindowsApps/docker` means the self-hosted WSL runner is finding a WindowsApps Docker shim. Both Docker Build and Docker Push jobs remove WindowsApps directories from PATH, put `/usr/bin` first and persist that PATH for later steps before setting up Buildx. They verify `command -v docker` resolves to `/usr/bin/docker` and run `docker version`. Ensure the Linux Docker CLI is installed there and the runner can access the Docker daemon.
+
 ## Kubernetes Docker Hub pull secret
 
 Before deploying directly or running the GitHub Actions deploy workflow, create `docker-hub-pull-secret` in the worker's namespace. The Deployment references this secret through `imagePullSecrets`; it must have type `kubernetes.io/dockerconfigjson`, with registry authentication stored in `.dockerconfigjson`. An Opaque secret with `DOCKER_USERNAME`/`DOCKER_PASSWORD` keys cannot be used for image pulling.
