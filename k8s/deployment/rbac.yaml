@@ -14,6 +14,7 @@ kind: Role
 metadata:
   name: scaffoldops-deployer
   namespace: generated-dev
+# Deployment status polling needs no ReplicaSet, pod or event access.
 rules:
   - apiGroups: [apps]
     resources: [deployments]

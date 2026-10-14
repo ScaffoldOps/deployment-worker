@@ -1,6 +1,8 @@
 package com.scaffoldops.deploymentworker.infrastructure.kubernetes;
 
 import com.scaffoldops.deploymentworker.domain.event.DeploymentEvent;
+import io.kubernetes.client.custom.IntOrString;
+import io.kubernetes.client.openapi.models.*;
 import java.util.List;
 import java.util.Map;
 import org.springframework.beans.factory.annotation.Value;
@@ -20,21 +22,29 @@ public class KubernetesResourceFactory {
                 "scaffoldops.io/request-id", event.generationRequestId().toString());
     }
 
-    public Map<String, Object> manifests(DeploymentEvent event) {
-        var labels = labels(event);
-        var selector = Map.of("scaffoldops.io/request-id", event.generationRequestId().toString());
-        var metadata = Map.of("name", event.resourceName(), "namespace", event.namespace(), "labels", labels);
-        var container = Map.of("name", "service", "image", event.imageRef(),
-                "ports", List.of(Map.of("containerPort", port)),
-                "readinessProbe", Map.of("tcpSocket", Map.of("port", port),
-                        "initialDelaySeconds", 5, "periodSeconds", 5));
-        var deployment = Map.of("apiVersion", "apps/v1", "kind", "Deployment", "metadata", metadata,
-                "spec", Map.of("replicas", event.replicas(), "selector", Map.of("matchLabels", selector),
-                        "template", Map.of("metadata", Map.of("labels", labels),
-                                "spec", Map.of("containers", List.of(container)))));
-        var service = Map.of("apiVersion", "v1", "kind", "Service", "metadata", metadata,
-                "spec", Map.of("type", "ClusterIP", "selector", selector,
-                        "ports", List.of(Map.of("port", port, "targetPort", port))));
-        return Map.of("apiVersion", "v1", "kind", "List", "items", List.of(deployment, service));
+    private V1ObjectMeta metadata(DeploymentEvent event) {
+        return new V1ObjectMeta().name(event.resourceName()).namespace(event.namespace()).labels(labels(event));
+    }
+
+    private Map<String, String> selector(DeploymentEvent event) {
+        return Map.of("scaffoldops.io/request-id", event.generationRequestId().toString());
+    }
+
+    public V1Deployment deployment(DeploymentEvent event) {
+        var container = new V1Container().name("service").image(event.imageRef())
+                .ports(List.of(new V1ContainerPort().containerPort(port)))
+                .readinessProbe(new V1Probe().tcpSocket(new V1TCPSocketAction().port(new IntOrString(port)))
+                        .initialDelaySeconds(5).periodSeconds(5));
+        return new V1Deployment().apiVersion("apps/v1").kind("Deployment").metadata(metadata(event))
+                .spec(new V1DeploymentSpec().replicas(event.replicas())
+                        .selector(new V1LabelSelector().matchLabels(selector(event)))
+                        .template(new V1PodTemplateSpec().metadata(new V1ObjectMeta().labels(labels(event)))
+                                .spec(new V1PodSpec().containers(List.of(container)))));
+    }
+
+    public V1Service service(DeploymentEvent event) {
+        return new V1Service().apiVersion("v1").kind("Service").metadata(metadata(event))
+                .spec(new V1ServiceSpec().type("ClusterIP").selector(selector(event))
+                        .ports(List.of(new V1ServicePort().port(port).targetPort(new IntOrString(port)))));
     }
 }

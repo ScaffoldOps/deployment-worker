@@ -21,10 +21,12 @@ app:
       deployment-requested: ${DEPLOYMENT_REQUESTED_TOPIC:deployment-requested}
       undeployment-requested: ${UNDEPLOYMENT_REQUESTED_TOPIC:undeployment-requested}
   generator-api:
-    base-url: ${GENERATOR_API_BASE_URL:http://generator-api:8080}
+    base-url: ${GENERATOR_API_BASE_URL:http://generator-api:8081/api/generator/v1}
     token-url: ${GENERATOR_API_TOKEN_URL:}
     client-id: ${GENERATOR_API_CLIENT_ID:deployment-worker}
     client-secret: ${GENERATOR_API_CLIENT_SECRET:}
     token: ${GENERATOR_API_TOKEN:}
   kubernetes:
     container-port: ${GENERATED_CONTAINER_PORT:8080}
+    rollout-timeout: ${DEPLOYMENT_ROLLOUT_TIMEOUT:120s}
+    poll-interval: ${DEPLOYMENT_POLL_INTERVAL:1s}
