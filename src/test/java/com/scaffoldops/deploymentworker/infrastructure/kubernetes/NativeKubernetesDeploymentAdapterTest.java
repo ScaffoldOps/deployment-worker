@@ -60,7 +60,10 @@ class NativeKubernetesDeploymentAdapterTest {
             } else if (method.equals("DELETE")) {
                 deleting = true;
                 code = missingDelete ? 404 : 200;
-                response = "{\"kind\":\"Status\",\"status\":\"Success\"}";
+                // Client 23.0.0 expects V1Service for Service deletion and V1Status for Deployment deletion.
+                response = !missingDelete && kind.equals("Service")
+                        ? resource(kind, false)
+                        : "{\"kind\":\"Status\",\"status\":\"Success\"}";
             } else if (method.equals("POST") || method.equals("PATCH")) {
                 response = resource(kind, false);
             } else if (path.endsWith("/deployments") || path.endsWith("/services")) {
@@ -166,8 +169,8 @@ class NativeKubernetesDeploymentAdapterTest {
             assertThat(json.readTree(deletion.body).at("/preconditions/resourceVersion").asText()).isEqualTo("7");
         }
         assertThat(requests.stream().filter(r -> r.method.equals("GET"))).allSatisfy(r ->
-                assertThat(r.query).contains("labelSelector=scaffoldops.io%2Frequest-id=" + event.generationRequestId())
-                        .contains("app.kubernetes.io%2Fmanaged-by=scaffoldops"));
+                assertThat(r.query).isEqualTo("labelSelector=scaffoldops.io/request-id=" + event.generationRequestId()
+                        + ",app.kubernetes.io/managed-by=scaffoldops"));
     }
 
     @Test
