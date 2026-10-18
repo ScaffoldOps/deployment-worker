@@ -1,0 +1,44 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../deployment
+# Do not use a global namespace transformer: worker and generated resources differ.
+patches:
+  - target:
+      kind: Namespace
+      name: generated-dev
+    patch: |-
+      - op: replace
+        path: /metadata/name
+        value: generated-pre
+  - target:
+      kind: Deployment
+      name: deployment-worker
+    patch: |-
+      - op: replace
+        path: /metadata/namespace
+        value: scaffoldops-pre
+  - target:
+      kind: ServiceAccount
+      name: deployment-worker
+    patch: |-
+      - op: replace
+        path: /metadata/namespace
+        value: scaffoldops-pre
+  - target:
+      kind: Role
+      name: scaffoldops-deployer
+    patch: |-
+      - op: replace
+        path: /metadata/namespace
+        value: generated-pre
+  - target:
+      kind: RoleBinding
+      name: scaffoldops-deployer
+    patch: |-
+      - op: replace
+        path: /metadata/namespace
+        value: generated-pre
+      - op: replace
+        path: /subjects/0/namespace
+        value: scaffoldops-pre

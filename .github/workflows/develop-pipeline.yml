@@ -27,7 +27,6 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
-          cache: maven
 
       - name: Maven verify (skip tests)
         run: mvn --batch-mode --no-transfer-progress verify -DskipTests
@@ -46,10 +45,17 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
-          cache: maven
 
       - name: Maven clean test
         run: mvn --batch-mode --no-transfer-progress clean test
+
+      - name: Set up kubectl for offline manifest tests
+        uses: azure/setup-kubectl@v4
+        with:
+          version: v1.32.0
+
+      - name: Deployment regression tests
+        run: python3 -m unittest discover -s scripts -p 'test_*.py' -v
 
   docker_build:
     name: Docker Build
@@ -101,7 +107,6 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
-          cache: maven
 
       - name: Build application jar
         run: mvn --batch-mode --no-transfer-progress clean package -DskipTests
@@ -129,6 +134,8 @@ jobs:
     runs-on: self-hosted
     needs:
       - docker_build
+    outputs:
+      image_digest: ${{ steps.push.outputs.digest }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -170,7 +177,6 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
-          cache: maven
 
       - name: Build application jar
         run: mvn --batch-mode --no-transfer-progress clean package -DskipTests
@@ -202,6 +208,7 @@ jobs:
           password: ${{ secrets.DOCKER_PASSWORD }}
 
       - name: Build and push Docker image
+        id: push
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -221,4 +228,4 @@ jobs:
       namespace: scaffoldops-dev
       generated_namespace: generated-dev
       environment_name: DEV
-      image_version: latest
+      image_digest: ${{ needs.docker_push.outputs.image_digest }}

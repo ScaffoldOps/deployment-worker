@@ -18,13 +18,13 @@ spec:
         - name: docker-hub-pull-secret
       containers:
         - name: deployment-worker
-          image: scaffoldops/deployment-worker:latest
+          image: victodomvar/scaffoldops-deployment-worker:must-be-set-by-deployer
           imagePullPolicy: IfNotPresent
           env:
             - name: KAFKA_BOOTSTRAP_SERVERS
               value: kafka:9092
             - name: GENERATOR_API_BASE_URL
-              value: http://generator-api:8081/api/generator/v1
+              value: http://generator-api-service/api/generator/v1
             - name: GENERATOR_API_TOKEN_URL
               valueFrom:
                 secretKeyRef:
