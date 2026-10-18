@@ -31,7 +31,6 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
-          cache: maven
 
       - name: Maven verify (skip tests)
         run: mvn --batch-mode --no-transfer-progress verify -DskipTests
@@ -50,7 +49,6 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
-          cache: maven
 
       - name: Maven clean test
         run: mvn --batch-mode --no-transfer-progress clean test
