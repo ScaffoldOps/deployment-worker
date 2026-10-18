@@ -1,0 +1,44 @@
+name: Deploy deployment-worker to Kubernetes
+
+on:
+  workflow_call:
+    inputs:
+      namespace:
+        required: true
+        type: string
+      generated_namespace:
+        required: true
+        type: string
+      environment_name:
+        required: true
+        type: string
+      image_digest:
+        required: true
+        type: string
+
+jobs:
+  deploy:
+    runs-on: self-hosted
+    environment: ${{ inputs.environment_name }}
+    env:
+      NAMESPACE: ${{ inputs.namespace }}
+      GENERATED_NAMESPACE: ${{ inputs.generated_namespace }}
+      ENVIRONMENT_NAME: ${{ inputs.environment_name }}
+      IMAGE_DIGEST: ${{ inputs.image_digest }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          clean: true
+
+      - name: Set up kubectl
+        uses: azure/setup-kubectl@v4
+        with:
+          version: v1.32.0
+
+      - name: Deploy application
+        shell: bash
+        run: |
+          set -euo pipefail
+          kubectl config use-context minikube
+          python3 scripts/deploy.py
