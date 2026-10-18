@@ -54,3 +54,11 @@ jobs:
 
       - name: Maven clean test
         run: mvn --batch-mode --no-transfer-progress clean test
+
+      - name: Set up kubectl for offline manifest tests
+        uses: azure/setup-kubectl@v4
+        with:
+          version: v1.32.0
+
+      - name: Deployment regression tests
+        run: python3 -m unittest discover -s scripts -p 'test_*.py' -v

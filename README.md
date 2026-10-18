@@ -15,14 +15,14 @@ Kafka port-forward alone does not fix broker metadata advertising `kafka:9092`; 
 | Variable | Use |
 | --- | --- |
 | `KAFKA_BOOTSTRAP_SERVERS` | Default `localhost:9092` |
-| `GENERATOR_API_BASE_URL` | Default `http://generator-api:8081/api/generator/v1` |
+| `GENERATOR_API_BASE_URL` | Default `http://generator-api-service/api/generator/v1` (port 80, same namespace) |
 | `GENERATOR_API_TOKEN_URL`, `GENERATOR_API_CLIENT_ID`, `GENERATOR_API_CLIENT_SECRET` | OAuth callback credentials; client ID default `deployment-worker` |
 | `GENERATOR_API_TOKEN` | Local static-token alternative |
 | `GENERATED_CONTAINER_PORT` | Default `8080` |
 | `DEPLOYMENT_ROLLOUT_TIMEOUT`, `DEPLOYMENT_POLL_INTERVAL` | Default `120s`, `1s`; apply to rollout and deletion waits |
 | `DEPLOYMENT_REQUESTED_TOPIC`, `UNDEPLOYMENT_REQUESTED_TOPIC`, `ARTIFACT_CLEANUP_REQUESTED_TOPIC` | Topic overrides |
 
-Kubernetes requires `deployment-worker-oauth` with `token-url` and `client-secret`, plus `docker-hub-pull-secret` of type `kubernetes.io/dockerconfigjson` in the worker namespace. The worker has no PostgreSQL dependency. Its Kafka group is `deployment-worker`.
+Infrastructure must provision `deployment-worker-oauth` with `token-url` and `client-secret`, plus `docker-hub-pull-secret` of type `kubernetes.io/dockerconfigjson` in each worker namespace. This repository neither reads nor writes cluster secrets. The worker has no PostgreSQL dependency. Its Kafka group is `deployment-worker`.
 
 ## Build, test and run
 
@@ -30,6 +30,7 @@ Run from this repository root after provisioning the dependencies and exporting 
 
 ```bash
 mvn clean test
+python3 -m unittest discover -s scripts -p 'test_*.py' -v
 mvn clean package -DskipTests
 ```
 
@@ -39,24 +40,23 @@ mvn clean package -DskipTests
 docker build -f Dockerfile -t victodomvar/scaffoldops-deployment-worker:local .
 ```
 
-The Dockerfile builds the JAR and runs Java only. The runtime contains no kubectl binary. `io.kubernetes:client-java:23.0.0` matches Kubernetes 1.32 ([official compatibility matrix](https://github.com/kubernetes-client/java/wiki/2.-Versioning-and-Compatibility)). CI publishes `victodomvar/scaffoldops-deployment-worker` with `latest` and full commit SHA; both branch pipelines deploy `latest`. GitHub Actions requires repository/organization secrets `DOCKER_USERNAME` and `DOCKER_PASSWORD` (a Docker Hub access token).
+The Dockerfile builds the JAR and runs Java only. The runtime contains no kubectl binary. `io.kubernetes:client-java:23.0.0` matches Kubernetes 1.32 ([official compatibility matrix](https://github.com/kubernetes-client/java/wiki/2.-Versioning-and-Compatibility)). CI publishes `victodomvar/scaffoldops-deployment-worker` with `latest` and full commit SHA; deployments use the immutable digest returned by the push action, never either tag. GitHub Actions requires repository/organization secrets `DOCKER_USERNAME` and `DOCKER_PASSWORD` (a Docker Hub access token), Python 3 and kubectl on the self-hosted deployment runner.
 
-For local Minikube (Kubernetes 1.32), first provision Kafka, generator-api, the `scaffoldops-dev` namespace and the secrets described above. Then build and load the local image:
+For Minikube (Kubernetes 1.32), infrastructure must first provision Kafka, generator-api, the worker namespace and the secrets described above. Inspect the appropriate overlay, then deploy a published digest:
 
 ```bash
-minikube start --kubernetes-version=v1.32.0 # for a new local cluster
-docker build -t scaffoldops/deployment-worker:local .
-minikube image load scaffoldops/deployment-worker:local
-kubectl kustomize k8s/deployment # render and inspect
-kubectl apply --dry-run=server -k k8s/deployment
-kubectl apply -k k8s/deployment
-kubectl -n scaffoldops-dev set image deploy/deployment-worker deployment-worker=scaffoldops/deployment-worker:local
-kubectl -n scaffoldops-dev rollout status deploy/deployment-worker
+kubectl kustomize k8s/overlays/dev # inspect only; base image is a fail-closed placeholder
+kubectl kustomize k8s/overlays/pre
+# Set IMAGE_DIGEST to the sha256:<64 hex characters> returned by the image push.
+ENVIRONMENT_NAME=DEV NAMESPACE=scaffoldops-dev GENERATED_NAMESPACE=generated-dev \
+  IMAGE_DIGEST="$IMAGE_DIGEST" python3 scripts/deploy.py
 ```
 
-The supplied Role/RoleBinding grants get/list/watch/create/patch/delete on Deployments and Services in `generated-dev`. Readiness polls Deployment status (observed generation, updated, ready and available replicas); it needs no ReplicaSet, pod or event permissions. Undeploy lists by both ScaffoldOps ownership labels, deletes with UID/resourceVersion preconditions and waits for removal. Extra target namespaces need equivalent bindings. Generated pods do not receive imagePullSecrets automatically.
+DEV maps `scaffoldops-dev` to `generated-dev`; PRE maps `scaffoldops-pre` to `generated-pre`. The Role/RoleBinding grants only get/list/create/patch/delete on Deployments and Services in that environment's generated namespace. Readiness polls Deployment status (observed generation, updated, ready and available replicas); it needs no watch, ReplicaSet, pod, event or secret permissions. Undeploy lists by both ScaffoldOps ownership labels, deletes with UID/resourceVersion preconditions and waits for removal. Generated pods do not receive imagePullSecrets automatically.
 
-Do not mount a kubeconfig or kubectl wrapper into the worker. If an existing deployment still has a temporary workaround, remove its KUBECONFIG environment variable and kubeconfig/wrapper volume mounts and volumes before rollout. The repository manifests contain none. ServiceAccount token automount must remain enabled (the Kubernetes default).
+`scripts/deploy.py` renders the digest into the selected overlay before any write. It applies the namespace-scoped RBAC, then creates the Deployment or replaces it using its current resourceVersion. The complete pod spec is authoritative: runtime-only environment variables, wrapper/kubeconfig mounts and volumes are removed in the same update as the image. It does not delete/recreate the Deployment or issue a separate image update/restart. A concurrent update conflict fails the run; rerun after inspection. Manual pod-spec customizations must be represented in Git. Admission-injected fields may be reintroduced by cluster policy.
+
+Do not mount a kubeconfig or kubectl wrapper into the worker. The repository manifests contain none; the deployment script removes old runtime overrides on replacement. ServiceAccount token automount must remain enabled (the Kubernetes default).
 
 Check authorization from your workstation:
 
@@ -74,7 +74,7 @@ Through generator-api, the public contract stays `POST /generation-requests/{id}
 - `main-pipeline.yml`: corresponding PRE pipeline targeting `scaffoldops-pre`.
 - `deploy-k8s.yml`: reusable `workflow_call` deployment, selects context `minikube` and waits for rollout; it is not manually dispatchable.
 
-Jobs use self-hosted runners. PRE needs additional infrastructure; see [delivery guide](https://github.com/ScaffoldOps/scaffoldops-docs/blob/main/docs/delivery.md).
+Jobs use self-hosted runners. PRE needs additional infrastructure; see [delivery guide](https://github.com/ScaffoldOps/scaffoldops-docs/blob/main/docs/delivery.md). The deployment workflow rejects mismatched environment/namespace pairs. The application itself has no target-namespace allowlist: event namespaces remain part of the existing API contract and Kubernetes RBAC is the enforcement boundary. Infrastructure must audit/remove any pre-existing broad or cross-environment bindings; these manifests do not prune unrelated grants. An application-level allowlist is a separate hardening task, not included here.
 
 ## Troubleshooting
 

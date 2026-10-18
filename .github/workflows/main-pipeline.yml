@@ -51,6 +51,14 @@ jobs:
       - name: Maven clean test
         run: mvn --batch-mode --no-transfer-progress clean test
 
+      - name: Set up kubectl for offline manifest tests
+        uses: azure/setup-kubectl@v4
+        with:
+          version: v1.32.0
+
+      - name: Deployment regression tests
+        run: python3 -m unittest discover -s scripts -p 'test_*.py' -v
+
   docker_build:
     name: Docker Build
     runs-on: self-hosted
@@ -129,6 +137,8 @@ jobs:
     runs-on: self-hosted
     needs:
       - docker_build
+    outputs:
+      image_digest: ${{ steps.push.outputs.digest }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -202,6 +212,7 @@ jobs:
           password: ${{ secrets.DOCKER_PASSWORD }}
 
       - name: Build and push Docker image
+        id: push
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -221,4 +232,4 @@ jobs:
       namespace: scaffoldops-pre
       generated_namespace: generated-pre
       environment_name: PRE
-      image_version: latest
+      image_digest: ${{ needs.docker_push.outputs.image_digest }}
