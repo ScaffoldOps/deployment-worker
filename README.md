@@ -31,6 +31,8 @@ Run from this repository root after provisioning the dependencies and exporting 
 ```bash
 mvn clean test
 python3 -m unittest discover -s scripts -p 'test_*.py' -v
+# Optional: real kubectl rendering and client dry-run (cluster discovery access required; no writes).
+DEPLOYMENT_WORKER_CLIENT_RENDER_TEST=1 python3 -m unittest discover -s scripts -p 'test_*.py' -v
 mvn clean package -DskipTests
 ```
 

@@ -23,6 +23,20 @@ def kubectl(*args, payload=None):
     ).stdout
 
 
+def decode_resources(output):
+    decoder = json.JSONDecoder()
+    resources = []
+    offset = 0
+    # kubectl can print adjacent JSON objects rather than one Kubernetes List.
+    while offset < len(output):
+        if output[offset].isspace():
+            offset += 1
+            continue
+        resource, offset = decoder.raw_decode(output, offset)
+        resources.extend(resource["items"] if resource.get("kind") == "List" else [resource])
+    return resources
+
+
 def render(overlay, digest):
     with tempfile.TemporaryDirectory(prefix="deployment-worker-") as directory:
         # JSON is valid YAML; no additional runner libraries or global text substitutions.
@@ -33,11 +47,10 @@ def render(overlay, digest):
             "images": [{"name": IMAGE, "newName": IMAGE, "digest": digest}],
         }), encoding="utf-8")
         manifests = kubectl("kustomize", directory)
-    rendered = json.loads(kubectl(
+    return decode_resources(kubectl(
         "create", "--dry-run=client", "--validate=false", "-f", "-", "-o", "json",
         payload=manifests,
     ))
-    return rendered["items"] if rendered.get("kind") == "List" else [rendered]
 
 
 def deploy(environ):
