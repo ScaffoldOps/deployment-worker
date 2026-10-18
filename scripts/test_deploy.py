@@ -1,6 +1,7 @@
 import contextlib
 import io
 import json
+import os
 from pathlib import Path
 import shutil
 import subprocess
@@ -102,6 +103,55 @@ class DeployTest(unittest.TestCase):
                 return json.dumps({"kind": "List", "items": resources})
             with patch.object(deploy, "kubectl", side_effect=respond):
                 self.assertEqual(deploy.render(name.lower(), DIGEST), resources)
+
+    def test_render_accepts_pretty_printed_kubectl_json_stream(self):
+        for name in deploy.ENVIRONMENTS:
+            resources = self.resources(name)
+            resources[1]["metadata"]["annotations"] = {"example": 'braces }{ and quote " in a value'}
+            output = "\n" + "\n".join(json.dumps(item, indent=4) for item in resources) + "\n\t "
+            with self.subTest(environment=name), patch.object(
+                    deploy, "kubectl", side_effect=["rendered YAML", output]):
+                self.assertEqual(deploy.render(name.lower(), DIGEST), resources)
+
+    def test_decode_resources_supports_single_objects_lists_and_streams(self):
+        resources = self.resources()
+        for output in (json.dumps({"kind": "List", "items": resources}),
+                       "".join(json.dumps(item) for item in resources),
+                       json.dumps({"kind": "List", "items": resources[:1]}) + "\r\n"
+                       + json.dumps(resources[1])):
+            with self.subTest(output=output):
+                self.assertEqual(deploy.decode_resources(output), resources)
+        self.assertEqual(deploy.decode_resources(json.dumps(resources[0])), resources[:1])
+        self.assertEqual(deploy.decode_resources(" \r\n\t"), [])
+
+    def test_decode_resources_rejects_truncated_or_non_json_trailing_output(self):
+        valid = json.dumps(self.resources()[0])
+        for suffix in ('\n{"kind":', "\nnot JSON"):
+            with self.subTest(suffix=suffix), self.assertRaises(json.JSONDecodeError):
+                deploy.decode_resources(valid + suffix)
+
+    @unittest.skipUnless(os.environ.get("DEPLOYMENT_WORKER_CLIENT_RENDER_TEST") == "1",
+                         "set DEPLOYMENT_WORKER_CLIENT_RENDER_TEST=1 for real kubectl client dry-run")
+    def test_real_kubectl_client_render_both_environments(self):
+        # Uses configured cluster discovery only; create is --dry-run=client.
+        for name, (namespace, generated, overlay) in deploy.ENVIRONMENTS.items():
+            with self.subTest(environment=name):
+                resources = deploy.render(overlay, DIGEST)
+                self.assertEqual(len(resources), 5)
+                self.assertEqual({item["kind"] for item in resources},
+                                 {"Namespace", "ServiceAccount", "Role", "RoleBinding", "Deployment"})
+                for item in resources:
+                    kind = item["kind"]
+                    if kind == "Namespace":
+                        self.assertEqual(item["metadata"]["name"], generated)
+                    else:
+                        self.assertEqual(item["metadata"]["namespace"],
+                                         generated if kind in ("Role", "RoleBinding") else namespace)
+                    if kind == "RoleBinding":
+                        self.assertEqual(item["subjects"][0]["namespace"], namespace)
+                    if kind == "Deployment":
+                        container, = item["spec"]["template"]["spec"]["containers"]
+                        self.assertEqual(container["image"], f"{deploy.IMAGE}@{DIGEST}")
 
     @unittest.skipUnless(shutil.which("kubectl"), "kubectl is needed for offline Kustomize checks")
     def test_real_kustomize_renders_both_digest_overlays_offline(self):
